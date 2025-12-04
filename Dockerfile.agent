@@ -1,0 +1,23 @@
+# Dockerfile for ADK Agent with adk-web interface
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Copy requirements and install dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy agent code and configuration
+COPY src ./src
+COPY config ./config
+
+# Set environment variables for Docker deployment
+ENV MODEL_NAME=llama3.2:3b
+ENV OLLAMA_HOST=http://ollama:11434
+ENV MCP_URL=http://mcp-server:8000/mcp
+
+# Expose adk-web port
+EXPOSE 8000
+
+# Run adk web interface
+CMD ["adk", "web", "--port", "8000", "--host", "0.0.0.0"]

@@ -1,0 +1,15 @@
+# Dockerfile for Ollama with llama3.2:3b model
+FROM ollama/ollama:latest
+
+# Create directory for Ollama models
+RUN mkdir -p /root/.ollama
+
+# Expose Ollama API port
+EXPOSE 11434
+
+# Copy startup script
+COPY docker-entrypoint-ollama.sh /docker-entrypoint-ollama.sh
+RUN chmod +x /docker-entrypoint-ollama.sh
+
+# Set the entrypoint
+ENTRYPOINT ["/docker-entrypoint-ollama.sh"]

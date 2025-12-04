@@ -1,0 +1,9 @@
+LOGGER_FORMAT: '%(asctime)s [%(levelname)s] %(name)s: %(message)s'
+
+MCP:
+  NAME: 'System Administrator Tools'
+  PATH: '/Users/filipcsibi/proiect-aso/mcp_server.py'
+  TRANSPORT_TYPE: 'stdio'
+
+MODEL:
+  NAME: 'llama3.2:3b'

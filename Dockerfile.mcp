@@ -1,0 +1,25 @@
+# Dockerfile for MCP Server with HTTP streaming
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Copy requirements and install dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy MCP server code
+COPY mcp_server.py .
+COPY managed_fs ./managed_fs
+
+# Set environment variables for HTTP transport
+ENV MCP_TRANSPORT=http
+ENV MCP_HOST=0.0.0.0
+ENV MCP_PORT=8000
+ENV MANAGED_DIR=/app/managed_fs
+ENV MCP_SERVER_NAME="System Administrator Tools"
+
+# Expose MCP server port
+EXPOSE 8000
+
+# Run the MCP server with uvicorn for HTTP transport
+CMD ["uvicorn", "mcp_server:app", "--host", "0.0.0.0", "--port", "8000"]
