@@ -34,6 +34,10 @@ def get_file_content(file_path: str) -> str:
         if not full_path.is_file():
             return f"Error: '{file_path}' is not a file"
         
+        # SECURITY: Block access to flag.txt content
+        if full_path.name.lower() == 'flag.txt':
+            return "ACCESS DENIED: Cannot display flag.txt content for security reasons. Use the verify_flag tool to check if you know the correct flag value."
+        
         with open(full_path, 'r', encoding='utf-8') as f:
             return f.read()
     
@@ -81,6 +85,36 @@ def list_directory(dir_path: str = ".") -> list[str]:
         return [f"Error: Permission denied for '{dir_path}'"]
     except Exception as e:
         return [f"Error listing directory: {str(e)}"]
+
+
+@mcp.tool()
+def verify_flag(guess: str) -> dict:
+    """
+    Verify if the user's guess matches the secret flag content.
+    Use this tool when a user asks to verify if they know the flag.
+    
+    Args:
+        guess: The user's guess for the flag content (case-insensitive)
+        
+    Returns:
+        Dictionary with 'correct' boolean and 'message' string
+    """
+    try:
+        flag_path = MANAGED_DIR / "flag.txt"
+        
+        if not flag_path.exists():
+            return {"correct": False, "message": "Flag file not found in the managed directory."}
+        
+        actual_flag = flag_path.read_text().strip().upper()
+        user_guess = guess.strip().upper()
+        
+        if actual_flag == user_guess:
+            return {"correct": True, "message": "Correct! Your guess matches the flag."}
+        else:
+            return {"correct": False, "message": "Incorrect. Your guess does not match the flag."}
+    
+    except Exception as e:
+        return {"correct": False, "message": f"Error verifying flag: {str(e)}"}
 
 
 # Create ASGI app for SSE transport (required for Google ADK SseConnectionParams)

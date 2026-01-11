@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="ro">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Proiect ASO - Faza 2</title>
+    <style>
+        body {
+            font-family: 'Times New Roman', Times, serif;
+            font-size: 12pt;
+            line-height: 1.5;
+            max-width: 800px;
+            margin: 40px auto;
+            padding: 20px;
+        }
+        h1 {
+            text-align: center;
+            font-size: 18pt;
+            margin-bottom: 10px;
+        }
+        h2 {
+            font-size: 14pt;
+            margin-top: 20px;
+            margin-bottom: 10px;
+        }
+        h3 {
+            font-size: 12pt;
+            font-weight: bold;
+            margin-top: 15px;
+            margin-bottom: 8px;
+        }
+        .author {
+            text-align: center;
+            font-size: 12pt;
+            margin-bottom: 5px;
+        }
+        .date {
+            text-align: center;
+            font-size: 12pt;
+            margin-bottom: 30px;
+        }
+        pre {
+            background-color: #f5f5f5;
+            border: 1px solid #ddd;
+            padding: 10px;
+            overflow-x: auto;
+            font-size: 10pt;
+            font-family: 'Courier New', monospace;
+        }
+        code {
+            background-color: #f5f5f5;
+            padding: 2px 4px;
+            font-family: 'Courier New', monospace;
+            font-size: 10pt;
+        }
+        ul, ol {
+            margin-left: 20px;
+        }
+        li {
+            margin-bottom: 5px;
+        }
+    </style>
+</head>
+<body>
+
+<h1><strong>Proiect ASO - Faza 2<br>Dockerizare Sistem Agent LLM</strong></h1>
+<p class="author">Filip Csibi</p>
+<p class="date">Decembrie 2024</p>
+
+<h2>1. Cerințele Rezolvate</h2>
+
+<p>Proiectul implementează un sistem de administrare fișiere bazat pe agent LLM, compus din 3 containere Docker:</p>
+
+<ul>
+    <li><strong>Ollama</strong> - Server LLM cu modelul qwen2.5:7b (port 11434)</li>
+    <li><strong>MCP Server</strong> - Server Model Context Protocol cu HTTP/SSE pentru expunerea tool-urilor de administrare fișiere (port 8000)</li>
+    <li><strong>ADK Agent</strong> - Agent conversațional cu interfață web adk-web (port 3000)</li>
+</ul>
+
+<p><strong>Utilitate practică:</strong> Sistemul permite administratorilor să interacționeze cu filesystem-ul prin comenzi în limbaj natural ("what is in test.txt?", "list all files"), oferind izolare prin containere și securitate prin restricționarea accesului la un director specific.</p>
+
+<h2>2. Modul de Rezolvare</h2>
+
+<h3>2.1 Pachete Instalate</h3>
+
+<p><strong>requirements.txt:</strong> google-adk (framework pentru agent), fastmcp (server MCP cu HTTP/SSE), litellm (interfață pentru Ollama), uvicorn (ASGI server), fastapi, pyyaml, python-box.</p>
+
+<h3>2.2 Dockerfile.ollama</h3>
+
+<pre>FROM ollama/ollama:latest
+RUN mkdir -p /root/.ollama
+EXPOSE 11434
+COPY docker-entrypoint-ollama.sh /docker-entrypoint-ollama.sh
+RUN chmod +x /docker-entrypoint-ollama.sh
+ENTRYPOINT ["/docker-entrypoint-ollama.sh"]</pre>
+
+<p><strong>Script docker-entrypoint-ollama.sh:</strong></p>
+<pre>#!/bin/bash
+set -e
+ollama serve &amp;          # Porneste server in background
+sleep 5
+ollama pull qwen2.5:7b  # Descarca modelul
+wait                    # Mentine containerul activ</pre>
+
+<h3>2.3 Dockerfile.mcp</h3>
+
+<pre>FROM python:3.11-slim
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+COPY mcp_server.py .
+COPY managed_fs ./managed_fs
+ENV MCP_TRANSPORT=http MCP_HOST=0.0.0.0 MCP_PORT=8000
+ENV MANAGED_DIR=/app/managed_fs
+EXPOSE 8000
+CMD ["uvicorn", "mcp_server:app", "--host", "0.0.0.0", "--port", "8000"]</pre>
+
+<p><strong>mcp_server.py</strong> - implementează 2 tool-uri:</p>
+<ul>
+    <li><code>get_file_content(file_path)</code> - citește conținutul unui fișier cu validare path traversal</li>
+    <li><code>list_directory(dir_path)</code> - listează fișiere și directoare cu dimensiuni</li>
+</ul>
+
+<p>Exportă aplicația ASGI cu <code>app = mcp.http_app(transport='sse')</code> pentru comunicare HTTP/SSE.</p>
+
+<h3>2.4 Dockerfile.agent</h3>
+
+<pre>FROM python:3.11-slim
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+COPY src ./src
+COPY config ./config
+ENV MODEL_NAME=qwen2.5:7b OLLAMA_HOST=http://ollama:11434
+ENV MCP_URL=http://mcp-server:8000/sse
+EXPOSE 8000
+CMD ["adk", "web", "--port", "8000", "--host", "0.0.0.0"]</pre>
+
+<p><strong>src/agent.py</strong> - configurare agent cu fix pentru răspunsuri scurte:</p>
+<pre>root_agent = Agent(
+    model=LiteLlm(
+        model=f'ollama_chat/{MODEL_NAME}',
+        api_base=OLLAMA_HOST,
+        max_tokens=50,      # FIX: limiteaza lungime raspuns
+        temperature=0.0     # raspunsuri deterministe
+    ),
+    name="system_administration",
+    instruction="""You are a file system assistant.
+    Answer in ONE short sentence. Call the tool ONCE,
+    say answer in ONE sentence, DONE.""",
+    tools=[McpToolset(connection_params=SseConnectionParams(url=MCP_URL))]
+)</pre>
+
+<h3>2.5 docker-compose.yml</h3>
+
+<pre>services:
+  ollama:
+    build: {context: ., dockerfile: Dockerfile.ollama}
+    ports: ["11434:11434"]
+    volumes: [ollama_data:/root/.ollama]
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list || exit 1"]
+      start_period: 60s  # timp pentru download model
+
+  mcp-server:
+    build: {context: ., dockerfile: Dockerfile.mcp}
+    ports: ["8000:8000"]
+    volumes: ["./managed_fs:/app/managed_fs:ro"]  # read-only
+
+  agent:
+    build: {context: ., dockerfile: Dockerfile.agent}
+    ports: ["3000:8000"]
+    depends_on:
+      ollama: {condition: service_healthy}
+      mcp-server: {condition: service_started}</pre>
+
+<h3>2.6 Comenzi de Utilizare</h3>
+
+<pre># Build si pornire
+docker-compose build
+docker-compose up -d
+
+# Verificare
+docker-compose ps
+docker-compose logs -f
+
+# Testare
+curl http://localhost:11434/api/tags
+curl http://localhost:8000/sse
+# Acceseaza http://localhost:3000 in browser
+
+# Oprire
+docker-compose down</pre>
+
+<h2>3. Probleme Întâlnite și Rezolvare</h2>
+
+<h3>Problema Principală: Funcția se Apela dar fără Răspuns în Chat</h3>
+
+<p><strong>Descriere:</strong> Agentul apela corect tool-urile MCP (se vedea în logs), dar utilizatorul nu primea răspuns în interfața de chat. Interfața rămânea blocată.</p>
+
+<p><strong>Cauză:</strong> Modelul LLM genera răspunsuri prea lungi care depășeau timeout-ul sistemului sau intra în bucle de raționament, apelând tool-uri multiplu sau generând explicații extensive.</p>
+
+<p><strong>Soluție (fix de pe MS Teams):</strong></p>
+<ul>
+    <li>Setare <code>max_tokens=50</code> în configurarea modelului pentru limitare strictă</li>
+    <li>Instrucțiuni foarte clare: "Answer in ONE short sentence. Call tool ONCE, say answer, DONE"</li>
+    <li><code>temperature=0.0</code> pentru răspunsuri deterministe</li>
+</ul>
+
+<p><strong>Rezultat:</strong> Agentul generează răspunsuri scurte, apelează tool-ul o singură dată, utilizatorul primește răspuns imediat fără timeout-uri.</p>
+
+<h3>Alte Probleme</h3>
+
+<p><strong>Agent nu se conectează la MCP:</strong> Am folosit <code>localhost</code> în loc de <code>mcp-server</code>. În Docker Compose, serviciile comunică prin numele lor, nu prin localhost.</p>
+
+<p><strong>Ollama OOM:</strong> Modelul qwen2.5:7b necesită 4-6GB RAM. Am setat limite Docker Desktop la minim 8GB.</p>
+
+<p><strong>Health check eșuează:</strong> Am adăugat <code>start_period: 60s</code> pentru a permite timp de download modelului înainte de verificare.</p>
+
+<p><strong>Permission denied:</strong> Am setat mount read-only <code>:ro</code> pentru managed_fs și permisiuni corecte pe host cu <code>chmod 755</code>.</p>
+
+<h2>4. Concluzii</h2>
+
+<p>Proiectul a implementat cu succes o arhitectură microservicii pentru administrarea fișierelor prin limbaj natural, cu izolare completă prin containere Docker. Componentele comunică prin HTTP/SSE, asigurând scalabilitate și mentenabilitate.</p>
+
+<p><strong>Realizări:</strong> Dockerizare completă (3 containere), orchestrare automată cu Docker Compose, comunicare inter-servicii HTTP/SSE, persistență date prin volumes, health checks, securitate (validare path-uri, mount read-only).</p>
+
+<p><strong>Învățăminte:</strong> Importanța health check-urilor pentru servicii cu inițializare lungă, necesitatea limitării resurselor LLM (max_tokens) pentru răspunsuri predictibile, configurare prin environment variables pentru flexibilitate, debugging metodic pentru sisteme distribuite.</p>
+
+<p><strong>Competențe dezvoltate:</strong> Docker și containerizare, orchestrare cu Docker Compose, arhitecturi microservicii, deployment LLM local, implementare Protocol MCP, debugging sisteme distribuite, securitate (path validation, izolare containere).</p>
+
+<p>Sistemul este gata pentru deployment în producție și poate fi extins cu tool-uri adiționale, autentificare, multiple agenți sau scalare cu Kubernetes.</p>
+
+</body>
+</html>
